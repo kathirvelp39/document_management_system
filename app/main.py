@@ -5,12 +5,14 @@ from sqlalchemy import text
 from app import models
 from app.database import Base, engine
 from app.routes.auth import router as auth_router
+from app.routes.documents import router as documents_router
 
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Document Management & Secure File Sharing System")
 
 app.include_router(auth_router)
+app.include_router(documents_router)
 
 
 @app.get("/")
