@@ -7,3 +7,17 @@ __pycache__/
 !.env.example
 .pytest_cache/
 uploads/
+# Logs and editor settings
+logs/
+.vscode/
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Python environments
+venv/
+.venv/
+__pycache__/
+*.py[cod]

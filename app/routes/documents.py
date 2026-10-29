@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     HTTPException,
@@ -15,6 +16,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.background_tasks import notify_document_uploaded
 from app.database import get_db
 from app.models import Document, DocumentShare, User
 from app.permissions import require_roles
@@ -60,7 +62,7 @@ def get_accessible_document(
     db: Session,
     required_permission: str = "view",
 ) -> Document:
-    """Check document ownership, admin access, and sharing permission."""
+    """Validate document ownership and sharing permissions."""
     document = db.get(Document, document_id)
 
     if document is None:
@@ -69,11 +71,9 @@ def get_accessible_document(
             detail="Document not found",
         )
 
-    # Owners have full access to their documents.
     if document.owner_id == user.id:
         return document
 
-    # Admins can access all documents.
     if user.role == "admin":
         return document
 
@@ -84,7 +84,6 @@ def get_accessible_document(
         )
     )
 
-    # Hide documents that have not been shared with this user.
     if share is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -95,7 +94,9 @@ def get_accessible_document(
     required_level = PERMISSION_LEVELS.get(required_permission)
 
     if required_level is None:
-        raise ValueError(f"Invalid permission: {required_permission}")
+        raise ValueError(
+            f"Invalid permission: {required_permission}"
+        )
 
     if granted_level < required_level:
         raise HTTPException(
@@ -111,7 +112,7 @@ def get_owned_document(
     user: User,
     db: Session,
 ) -> Document:
-    """Only the owner or an admin can delete a document."""
+    """Only the document owner or an admin can delete a document."""
     document = db.get(Document, document_id)
 
     if document is None:
@@ -134,6 +135,7 @@ async def save_upload(
     user: User,
     db: Session,
 ) -> Document:
+    """Validate, save, and record an uploaded document."""
     if not upload.filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -142,6 +144,12 @@ async def save_upload(
 
     original_name = Path(upload.filename).name
     extension = Path(original_name).suffix.lower()
+
+    if not original_name or original_name in {".", ".."}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid filename",
+        )
 
     if extension not in ALLOWED_TYPES:
         raise HTTPException(
@@ -187,7 +195,7 @@ async def save_upload(
             filename=original_name,
             stored_filename=stored_filename,
             file_path=str(destination),
-            content_type=upload.content_type or "application/octet-stream",
+            content_type=upload.content_type,
             file_size=file_size,
             owner_id=user.id,
         )
@@ -212,14 +220,23 @@ async def save_upload(
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     user: User = Depends(
         require_roles("admin", "manager", "user")
     ),
     db: Session = Depends(get_db),
 ):
-    """Admin, manager, and user roles can upload documents."""
+    """Upload a document and schedule a notification."""
     document = await save_upload(file, user, db)
+
+    background_tasks.add_task(
+        notify_document_uploaded,
+        document.id,
+        document.filename,
+        user.username,
+    )
+
     return document_response(document)
 
 
@@ -228,13 +245,14 @@ async def upload_document(
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_multiple_documents(
+    background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
     user: User = Depends(
         require_roles("admin", "manager", "user")
     ),
     db: Session = Depends(get_db),
 ):
-    """Upload multiple documents with role and file-count restrictions."""
+    """Upload multiple documents and schedule notifications."""
     if not files:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -253,6 +271,13 @@ async def upload_multiple_documents(
         for upload in files:
             document = await save_upload(upload, user, db)
             documents.append(document)
+
+            background_tasks.add_task(
+                notify_document_uploaded,
+                document.id,
+                document.filename,
+                user.username,
+            )
     finally:
         for upload in files:
             if not upload.file.closed:
@@ -348,7 +373,7 @@ def get_document(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """View a document if the user owns it or has view permission."""
+    """View a document owned by or shared with the user."""
     document = get_accessible_document(
         document_id=document_id,
         user=user,
@@ -365,7 +390,7 @@ def download_document(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Download requires download permission for shared documents."""
+    """Download a document when the user has sufficient permission."""
     document = get_accessible_document(
         document_id=document_id,
         user=user,
@@ -394,12 +419,16 @@ def delete_document(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Only the owner or an admin can delete a document."""
+    """Delete a document only if the user owns it or is an admin."""
     document = get_owned_document(document_id, user, db)
     file_path = UPLOAD_DIR / document.stored_filename
 
-    db.delete(document)
-    db.commit()
+    try:
+        db.delete(document)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
     file_path.unlink(missing_ok=True)
 
