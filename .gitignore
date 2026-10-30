@@ -1,23 +1,22 @@
-venv/
-.venv/
+# Python
 __pycache__/
 *.py[cod]
-.env
-.env.*
-!.env.example
-.pytest_cache/
-uploads/
-# Logs and editor settings
-logs/
-.vscode/
+
+# Virtual environments
+venv/
+.venv/
 
 # Environment secrets
 .env
 .env.*
 !.env.example
 
-# Python environments
-venv/
-.venv/
-__pycache__/
-*.py[cod]
+# Pytest
+.pytest_cache/
+
+# Uploads and logs
+uploads/
+logs/
+
+# Editor settings
+.vscode/
