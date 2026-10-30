@@ -16,7 +16,7 @@ if config.config_file_name is not None:
 
 load_dotenv()
 
-database_url = os.getenv("DATABASE_URL")
+database_url = os.getenv("ALEMBIC_DATABASE_URL") or os.getenv("DATABASE_URL")
 if not database_url:
     raise RuntimeError("DATABASE_URL is missing from .env")
 

@@ -6,3 +6,6 @@ python-dotenv
 pwdlib[argon2]
 PyJWT
 python-multipart
+redis
+email-validator
+alembic

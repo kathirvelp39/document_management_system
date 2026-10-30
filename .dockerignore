@@ -1,0 +1,14 @@
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.git/
+.github/
+.env
+.env.*
+!.env.example
+uploads/
+logs/
+migration_test.db
+*.log
